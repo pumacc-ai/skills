@@ -1,7 +1,7 @@
 ---
 name: Nginx Proxy
 slug: nginx-proxy
-version: "2.1.0"
+version: "2.2.0"
 description: Set up Nginx as a TLS-terminating reverse proxy with Let's Encrypt certificates and WebSocket support using direct shell commands. Auto-discovers target servers from inventory.yaml when present.
 ---
 
@@ -87,22 +87,44 @@ ufw allow 443/tcp
 
 ## 3. Obtain Let's Encrypt Certificate
 
-Start nginx first so certbot can write the ACME challenge file, then request the cert.
-If a cert already exists at `/etc/letsencrypt/live/$HOSTNAME/fullchain.pem`, skip this step.
+Check whether a valid cert already exists and covers `$HOSTNAME`. If the cert is missing,
+expired, or its SANs do not include `$HOSTNAME`, provision a new one via certbot.
 
 ```bash
-# Clear any stale ACME state from a previous failed attempt
-rm -rf /etc/letsencrypt/renewal/$HOSTNAME.conf \
-       /etc/letsencrypt/archive/$HOSTNAME \
-       /etc/letsencrypt/live/$HOSTNAME
+CERT="/etc/letsencrypt/live/$HOSTNAME/fullchain.pem"
 
-systemctl start nginx
+cert_valid_for_hostname() {
+  local cert="$1" host="$2"
+  [ -f "$cert" ] || return 1
 
-certbot --nginx \
-  --non-interactive \
-  --agree-tos \
-  --register-unsafely-without-email \
-  -d $HOSTNAME
+  # Check expiry — treat certs expiring within 7 days as invalid
+  openssl x509 -noout -checkend 604800 -in "$cert" 2>/dev/null || return 1
+
+  # Check that $host appears in CN or SANs
+  openssl x509 -noout -text -in "$cert" 2>/dev/null \
+    | grep -qE "(Subject:.*CN\s*=\s*$host|DNS:$host)" && return 0
+
+  return 1
+}
+
+if cert_valid_for_hostname "$CERT" "$HOSTNAME"; then
+  echo "Certificate already valid for $HOSTNAME — skipping certbot"
+else
+  echo "No valid certificate for $HOSTNAME — provisioning via Let's Encrypt"
+
+  # Remove stale state from any previous attempt
+  rm -rf /etc/letsencrypt/renewal/$HOSTNAME.conf \
+         /etc/letsencrypt/archive/$HOSTNAME \
+         /etc/letsencrypt/live/$HOSTNAME
+
+  systemctl start nginx
+
+  certbot --nginx \
+    --non-interactive \
+    --agree-tos \
+    --register-unsafely-without-email \
+    -d $HOSTNAME
+fi
 ```
 
 ## 4. WebSocket Upgrade Map

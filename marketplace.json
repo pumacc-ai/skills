@@ -57,7 +57,7 @@
     {
       "slug": "nginx-proxy",
       "name": "Nginx Proxy",
-      "version": "2.1.0",
+      "version": "2.2.0",
       "path": "nginx-proxy",
       "description": "Set up Nginx as a TLS reverse proxy with Let's Encrypt and WebSocket support via proxy.yaml Ansible playbook.",
       "tags": ["nginx", "proxy", "tls", "ssl", "letsencrypt", "websocket", "ansible"]
