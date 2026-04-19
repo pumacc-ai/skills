@@ -45,6 +45,14 @@
       "path": "server-setup",
       "description": "Provision a new server via setup.yaml Ansible playbook. Covers user creation, packages, Node.js, Claude Code, swap, fail2ban, and Bitwarden-resolved profile vars.",
       "tags": ["ansible", "server", "provisioning", "devops", "ubuntu"]
+    },
+    {
+      "slug": "nginx-proxy",
+      "name": "Nginx Proxy",
+      "version": "1.0.0",
+      "path": "nginx-proxy",
+      "description": "Set up Nginx as a TLS reverse proxy with Let's Encrypt and WebSocket support via proxy.yaml Ansible playbook.",
+      "tags": ["nginx", "proxy", "tls", "ssl", "letsencrypt", "websocket", "ansible"]
     }
   ]
 }
