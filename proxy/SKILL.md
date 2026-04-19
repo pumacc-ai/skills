@@ -1,6 +1,6 @@
 ---
-name: Nginx Proxy
-slug: nginx-proxy
+name: Proxy
+slug: proxy
 version: "2.2.0"
 description: Set up Nginx as a TLS-terminating reverse proxy with Let's Encrypt certificates and WebSocket support using direct shell commands. Auto-discovers target servers from inventory.yaml when present.
 ---
