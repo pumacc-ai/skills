@@ -1,0 +1,34 @@
+{
+  "$schema": "https://pumacc.com/schemas/skill-marketplace/v1",
+  "name": "PumaCC Skills Marketplace",
+  "description": "Reusable Claude Code skills maintained by PumaCC. Each skill is a self-contained capability pack installable into any Claude agent.",
+  "maintainer": "pumacc-ai",
+  "repository": "git@github.com:pumacc-ai/skills.git",
+  "installBase": ".openclaw/skills",
+  "skills": [
+    {
+      "slug": "api",
+      "name": "API Conventions",
+      "version": "1.0.1",
+      "path": "api-conventions",
+      "description": "Consume, debug, and integrate REST APIs with retry strategies, error handling, and production patterns.",
+      "tags": ["api", "rest", "http", "integration"]
+    },
+    {
+      "slug": "frontend",
+      "name": "Frontend Design",
+      "version": "1.0.2",
+      "path": "frontend-design",
+      "description": "Frontend development with React, Next.js, Tailwind CSS. Build landing pages, dashboards, forms, components.",
+      "tags": ["frontend", "react", "nextjs", "tailwind", "ui"]
+    },
+    {
+      "slug": "github",
+      "name": "GitHub",
+      "version": "1.0.0",
+      "path": "github",
+      "description": "Interact with GitHub using the gh CLI. Issues, PRs, CI runs, and advanced API queries.",
+      "tags": ["github", "git", "ci", "devops"]
+    }
+  ]
+}
