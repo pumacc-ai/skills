@@ -1,14 +1,68 @@
 ---
 name: Nginx Proxy
 slug: nginx-proxy
-version: "2.0.0"
-description: Set up Nginx as a TLS-terminating reverse proxy with Let's Encrypt certificates and WebSocket support using direct shell commands.
+version: "2.1.0"
+description: Set up Nginx as a TLS-terminating reverse proxy with Let's Encrypt certificates and WebSocket support using direct shell commands. Auto-discovers target servers from inventory.yaml when present.
 ---
 
 # Nginx Proxy Skill
 
 Set up Nginx as a TLS reverse proxy with Let's Encrypt and WebSocket support.
 All steps run directly on the target server as root (or via sudo).
+
+## Inventory Detection
+
+If `inventory.yaml` exists in the current directory, use it to discover target servers automatically. Extract all hosts and their variables with:
+
+```bash
+python3 - << 'EOF'
+import yaml, json
+
+with open('inventory.yaml') as f:
+    inv = yaml.safe_load(f)
+
+results = []
+all_vars = inv.get('all', {}).get('vars', {})
+
+for group_name, group in inv.get('all', {}).get('children', {}).items():
+    group_vars = group.get('vars', {})
+    for hostname, host_vars in (group.get('hosts') or {}).items():
+        host_vars = host_vars or {}
+        results.append({
+            'hostname':     hostname,
+            'ansible_host': host_vars.get('ansible_host', hostname),
+            'ansible_user': host_vars.get('ansible_user', group_vars.get('ansible_user', 'root')),
+            'ui_port':      host_vars.get('ui_port'),
+            'web_title':    host_vars.get('web_title', hostname),
+            'openclaw':     host_vars.get('openclaw_host', False),
+        })
+
+print(json.dumps(results, indent=2))
+EOF
+```
+
+Use the output to set variables for each host before running the setup steps via SSH:
+
+```bash
+HOSTNAME="coder.pumacc.com"
+ANSIBLE_HOST="129.212.150.103"   # IP to SSH to
+ANSIBLE_USER="pumacc"
+UI_PORT="18789"
+WEB_TITLE="PumaCoder"
+OPENCLAW=true
+```
+
+Run each setup step on the remote server:
+
+```bash
+ssh $ANSIBLE_USER@$ANSIBLE_HOST "sudo bash -s" << 'ENDSSH'
+  # paste the commands from steps 1–7 below, with variables substituted
+ENDSSH
+```
+
+When multiple hosts are present, loop over them and repeat for each.
+
+---
 
 Variables used throughout:
 - `HOSTNAME` — the server's public domain name (e.g. `coder.pumacc.com`)
