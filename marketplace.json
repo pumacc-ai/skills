@@ -33,10 +33,18 @@
     {
       "slug": "bitwarden",
       "name": "Bitwarden Secrets",
-      "version": "1.0.0",
+      "version": "1.1.0",
       "path": "bitwarden",
       "description": "Manage secrets with Bitwarden Secrets Manager. Auto-sync secrets to env vars and SSH key files via sync-bws.",
       "tags": ["secrets", "bitwarden", "bws", "ssh", "security"]
+    },
+    {
+      "slug": "server-setup",
+      "name": "Server Setup",
+      "version": "1.0.0",
+      "path": "server-setup",
+      "description": "Provision a new server via setup.yaml Ansible playbook. Covers user creation, packages, Node.js, Claude Code, swap, fail2ban, and Bitwarden-resolved profile vars.",
+      "tags": ["ansible", "server", "provisioning", "devops", "ubuntu"]
     }
   ]
 }
