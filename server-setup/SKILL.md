@@ -62,7 +62,7 @@ for group_name, group in inv.get('all', {}).get('children', {}).items():
         hv = host_vars or {}
 
         # service_user is required — fail hard if missing
-        service_user = hv.get('service_user') or hv.get('bands_user')
+        service_user = hv.get('service_user')
         if not service_user:
             errors.append(f"ERROR: host '{hostname}' is missing required field 'service_user'")
             continue
