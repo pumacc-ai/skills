@@ -1,8 +1,8 @@
 ---
 name: Agent Setup
 slug: agent-setup
-version: "1.0.0"
-description: Provision a remote OpenClaw agent node from scratch. Covers SSH keys, git identity, home repo, openclaw install, systemd service, extensions, and cron sync. No Ansible required.
+version: "1.1.0"
+description: Provision a remote OpenClaw agent node from scratch. Covers SSH keys, git identity, home repo, openclaw install, systemd service, extensions, and cron sync. Auto-discovers hosts from inventory.yaml. No Ansible required.
 ---
 
 # Agent Setup Skill
@@ -12,51 +12,168 @@ All commands run as `$AGENT_USER` on the remote server unless marked `(sudo)`.
 
 ## Inventory Detection
 
-If `inventory.yaml` is present, parse target hosts with:
+If `inventory.yaml` exists in the current directory, use it to discover and configure target hosts automatically.
+
+### Inventory Format
+
+Two `bw_secret_*` patterns are supported for resolving secrets from Bitwarden:
+
+| Pattern | Example | Resolved via |
+|---------|---------|--------------|
+| `bw_secret_<var>: <key-name>` | `bw_secret_anthropic_api_key: dan_anthropic_api_key` | BWS key looked up by **name** |
+| `profile_vars` value `bw:<uuid>` | `ANTHROPIC_API_KEY: "bw:9455622e-..."` | BWS secret looked up by **UUID** |
+
+Example inventory (`farafon/inventory.yaml` style):
+
+```yaml
+all:
+  vars:
+    project: farafon
+  children:
+    agents:
+      hosts:
+        dan.farafonov.info:
+          ansible_host: 178.128.132.23
+          ansible_user: dan
+          service_user: dan
+          web_title: "Daniel Farafonov"
+          ui_port: 6767
+          openclaw_host: true
+          openclaw_model: "anthropic/claude-sonnet-4-6"
+          bw_secret_anthropic_api_key: dan_anthropic_api_key   # resolved from BWS by key name
+          anthropic_api_key: ""                                 # filled in at provision time
+          git_user_name: "Dan Farafon"
+          git_user_email: "dan@farafon.com"
+          git_memory: "git@github.com:pumacc-ai/farafon-dan.git"
+          git_repos: []
+          openclaw_extensions: []
+          openclaw_skills: []
+          discord:
+            enabled: true
+            bw_secret_token: dan_discord_bot_token
+            dm_policy: pairing
+            group_policy: open
+```
+
+### Parse All Hosts
 
 ```bash
 python3 - << 'EOF'
-import yaml, json
+import yaml, json, subprocess, sys
+
+def bws_get_by_name(key_name):
+    """Resolve a BWS secret value by key name."""
+    try:
+        out = subprocess.check_output(
+            ['bws', 'secret', 'list', '--output', 'json'],
+            stderr=subprocess.DEVNULL
+        )
+        secrets = json.loads(out)
+        for s in secrets:
+            if s['key'] == key_name:
+                return s['value']
+    except Exception:
+        pass
+    return ''
+
+def bws_get_by_uuid(uuid):
+    """Resolve a BWS secret value by UUID."""
+    try:
+        out = subprocess.check_output(
+            ['bws', 'secret', 'get', uuid, '--output', 'json'],
+            stderr=subprocess.DEVNULL
+        )
+        return json.loads(out)['value']
+    except Exception:
+        return ''
 
 with open('inventory.yaml') as f:
     inv = yaml.safe_load(f)
 
-results = []
+all_vars = inv.get('all', {}).get('vars', {})
+results  = []
+
 for group_name, group in inv.get('all', {}).get('children', {}).items():
     group_vars = group.get('vars', {})
-    all_vars   = inv.get('all', {}).get('vars', {})
     for hostname, host_vars in (group.get('hosts') or {}).items():
-        host_vars = host_vars or {}
+        hv = host_vars or {}
+
+        # Resolve bw_secret_<field>: <key-name> entries
+        resolved = dict(hv)
+        for k, v in hv.items():
+            if k.startswith('bw_secret_'):
+                field = k[len('bw_secret_'):]   # e.g. "anthropic_api_key"
+                resolved[field] = bws_get_by_name(v)
+
+        # Resolve profile_vars bw:<uuid> values
+        profile_vars = {}
+        for pk, pv in hv.get('profile_vars', {}).items():
+            if isinstance(pv, str) and pv.startswith('bw:'):
+                profile_vars[pk] = bws_get_by_uuid(pv[3:])
+            else:
+                profile_vars[pk] = pv
+
         results.append({
-            'hostname':      hostname,
-            'ansible_host':  host_vars.get('ansible_host', hostname),
-            'agent_user':    host_vars.get('ansible_user', group_vars.get('ansible_user', 'root')),
-            'project':       all_vars.get('project', 'Agent'),
-            'git_user_name': host_vars.get('git_user_name', 'PumaCC Coder'),
-            'git_user_email':host_vars.get('git_user_email', 'dev@pumacc.com'),
-            'git_memory':    host_vars.get('git_memory', ''),
-            'git_repos':     host_vars.get('git_repos', []),
-            'profile_vars':  host_vars.get('profile_vars', {}),
-            'ui_port':       host_vars.get('ui_port', 18789),
+            'hostname':           hostname,
+            'ansible_host':       resolved.get('ansible_host', hostname),
+            'agent_user':         resolved.get('ansible_user', group_vars.get('ansible_user', 'root')),
+            'service_user':       resolved.get('service_user', resolved.get('ansible_user', 'root')),
+            'project':            all_vars.get('project', 'Agent'),
+            'web_title':          resolved.get('web_title', hostname),
+            'ui_port':            resolved.get('ui_port', 18789),
+            'openclaw_host':      resolved.get('openclaw_host', False),
+            'openclaw_model':     resolved.get('openclaw_model', 'anthropic/claude-sonnet-4-6'),
+            'anthropic_api_key':  resolved.get('anthropic_api_key', ''),
+            'git_user_name':      resolved.get('git_user_name', 'PumaCC Agent'),
+            'git_user_email':     resolved.get('git_user_email', 'dev@pumacc.com'),
+            'git_memory':         resolved.get('git_memory', ''),
+            'git_repos':          resolved.get('git_repos', []),
+            'profile_vars':       profile_vars,
+            'openclaw_extensions':resolved.get('openclaw_extensions', ['whatsapp']),
+            'openclaw_skills':    resolved.get('openclaw_skills', []),
+            'discord':            resolved.get('discord', {}),
         })
 
-print(json.dumps(results, indent=2))
+# Mask secrets in output
+safe = json.loads(json.dumps(results))
+for h in safe:
+    if h.get('anthropic_api_key'):
+        h['anthropic_api_key'] = '***'
+    for k in h.get('profile_vars', {}):
+        h['profile_vars'][k] = '***'
+
+print(json.dumps(safe, indent=2))
 EOF
 ```
 
-Set shell variables per host before running each section:
+### Set Variables Per Host
+
+After parsing, set shell variables for the host you are provisioning:
 
 ```bash
-HOSTNAME="coder.pumacc.com"
-AGENT_HOST="129.212.150.103"   # SSH target IP
-AGENT_USER="pumacc"
-PROJECT="PumaCoder"            # matches ~/.ssh/<PROJECT> key name
-GIT_USER_NAME="PumaCoder"
-GIT_USER_EMAIL="support@pumacc.com"
-GIT_MEMORY="git@github.com:pumacc-ai/pumacc-coder.git"
-UI_PORT=18789
+HOSTNAME="dan.farafonov.info"
+AGENT_HOST="178.128.132.23"
+AGENT_USER="dan"
+SERVICE_USER="dan"
+PROJECT="farafon"                  # matches ~/.ssh/<PROJECT> key name
+GIT_USER_NAME="Dan Farafon"
+GIT_USER_EMAIL="dan@farafon.com"
+GIT_MEMORY="git@github.com:pumacc-ai/farafon-dan.git"
+OPENCLAW_MODEL="anthropic/claude-sonnet-4-6"
+ANTHROPIC_API_KEY="<resolved from bw_secret_anthropic_api_key>"
+UI_PORT=6767
 NODE_HEAP_MB=1536
 ```
+
+Run each section below on the remote:
+
+```bash
+ssh $AGENT_USER@$AGENT_HOST "bash -s" << 'ENDSSH'
+  # commands here
+ENDSSH
+```
+
+When multiple hosts share the same `ansible_host` IP (e.g. multiple users on one server), provision them sequentially, one per `AGENT_USER`.
 
 Run each section remotely:
 ```bash
