@@ -1,179 +1,246 @@
 ---
 name: Nginx Proxy
 slug: nginx-proxy
-version: "1.0.0"
-description: Set up Nginx as a TLS-terminating reverse proxy with Let's Encrypt certificates and WebSocket support. Run via the proxy.yaml Ansible playbook.
+version: "2.0.0"
+description: Set up Nginx as a TLS-terminating reverse proxy with Let's Encrypt certificates and WebSocket support using direct shell commands.
 ---
 
 # Nginx Proxy Skill
 
-Provisions Nginx as a TLS reverse proxy using `proxy.yaml`. Handles HTTPS, WebSocket upgrades, Let's Encrypt certificates, and an optional OpenClaw landing page.
+Set up Nginx as a TLS reverse proxy with Let's Encrypt and WebSocket support.
+All steps run directly on the target server as root (or via sudo).
 
-## Quick Start
+Variables used throughout:
+- `HOSTNAME` — the server's public domain name (e.g. `coder.pumacc.com`)
+- `UI_PORT` — the backend port nginx proxies to (e.g. `18789`)
+- `WEB_TITLE` — display name used in the HTTP header and landing page
 
-```bash
-# Provision nginx proxy for a specific host
-./run proxy coder.pumacc.com
-
-# Provision all hosts in the agents group
-./run proxy
-```
-
-The host must already exist in `inventory.yaml` with `ansible_host`, `ui_port`, and `web_title` set.
-
-## Required inventory.yaml Fields
-
-```yaml
-hosts:
-  myserver.example.com:
-    ansible_host: 1.2.3.4
-    ui_port: 18789          # backend port nginx will proxy to
-    web_title: "My Agent"   # used in HTTP header and landing page title
-```
-
-Optional flag to enable the OpenClaw landing page:
-
-```yaml
-    openclaw_host: true
-```
-
-## What the Playbook Does
-
-### 1. Packages
-
-Installs: `nginx`, `certbot`, `python3-certbot-nginx`
-
-### 2. Firewall
-
-Opens ports 80 (HTTP) and 443 (HTTPS) via UFW before running certbot so the ACME HTTP-01 challenge can reach the server.
-
-### 3. Let's Encrypt Certificate
-
-- Checks for an existing cert at `/etc/letsencrypt/live/<hostname>/fullchain.pem`
-- If absent: clears any stale ACME state, starts nginx, then runs:
+## 1. Install Packages
 
 ```bash
-certbot --nginx --non-interactive --agree-tos \
-  --register-unsafely-without-email -d <hostname>
+apt-get update
+apt-get install -y nginx certbot python3-certbot-nginx
 ```
 
-- Skips the certbot step if the cert already exists (idempotent)
+## 2. Open Firewall Ports
 
-### 4. WebSocket Upgrade Map
+Open ports before running certbot — the ACME HTTP-01 challenge requires port 80 to be reachable.
 
-Writes `/etc/nginx/conf.d/websocket_upgrade.conf`:
+```bash
+ufw allow 80/tcp
+ufw allow 443/tcp
+```
 
-```nginx
+## 3. Obtain Let's Encrypt Certificate
+
+Start nginx first so certbot can write the ACME challenge file, then request the cert.
+If a cert already exists at `/etc/letsencrypt/live/$HOSTNAME/fullchain.pem`, skip this step.
+
+```bash
+# Clear any stale ACME state from a previous failed attempt
+rm -rf /etc/letsencrypt/renewal/$HOSTNAME.conf \
+       /etc/letsencrypt/archive/$HOSTNAME \
+       /etc/letsencrypt/live/$HOSTNAME
+
+systemctl start nginx
+
+certbot --nginx \
+  --non-interactive \
+  --agree-tos \
+  --register-unsafely-without-email \
+  -d $HOSTNAME
+```
+
+## 4. WebSocket Upgrade Map
+
+Write `/etc/nginx/conf.d/websocket_upgrade.conf` — makes `$connection_upgrade` available to all server blocks:
+
+```bash
+cat > /etc/nginx/conf.d/websocket_upgrade.conf << 'EOF'
 map $http_upgrade $connection_upgrade {
     default upgrade;
     ''      close;
 }
+EOF
 ```
 
-This makes the `$connection_upgrade` variable available globally to all server blocks.
+## 5. Nginx Site Config
 
-### 5. Nginx Site Config
+Write `/etc/nginx/sites-available/default`:
 
-Writes `/etc/nginx/sites-available/default` with two server blocks:
-
-**HTTP block** — redirects all traffic to HTTPS:
-
-```nginx
+```bash
+cat > /etc/nginx/sites-available/default << EOF
+# HTTP — redirect all traffic to HTTPS
 server {
     listen 80;
     listen [::]:80;
-    server_name <hostname>;
-    location / { return 301 https://$host$request_uri; }
+    server_name $HOSTNAME;
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
 }
-```
 
-**HTTPS block** — TLS termination + reverse proxy to `localhost:<ui_port>`:
-
-```nginx
+# HTTPS — TLS termination + reverse proxy
 server {
     listen 443 ssl;
     listen [::]:443 ssl;
-    server_name <hostname>;
+    server_name $HOSTNAME;
 
-    ssl_certificate     /etc/letsencrypt/live/<hostname>/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/<hostname>/privkey.pem;
+    ssl_certificate     /etc/letsencrypt/live/$HOSTNAME/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/$HOSTNAME/privkey.pem;
     include             /etc/letsencrypt/options-ssl-nginx.conf;
     ssl_dhparam         /etc/letsencrypt/ssl-dhparams.pem;
 
-    add_header X-Web-Title "<web_title>" always;
+    add_header X-Web-Title "$WEB_TITLE" always;
 
     location / {
-        proxy_pass         http://localhost:<ui_port>;
-        proxy_http_version 1.1;
+        proxy_pass          http://localhost:$UI_PORT;
+        proxy_http_version  1.1;
 
-        # WebSocket
-        proxy_set_header Upgrade    $http_upgrade;
-        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header    Upgrade    \$http_upgrade;
+        proxy_set_header    Connection \$connection_upgrade;
 
-        # Forwarding
-        proxy_set_header Host             $host;
-        proxy_set_header X-Real-IP        $remote_addr;
-        proxy_set_header X-Forwarded-For  $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header    Host              \$host;
+        proxy_set_header    X-Real-IP         \$remote_addr;
+        proxy_set_header    X-Forwarded-For   \$proxy_add_x_forwarded_for;
+        proxy_set_header    X-Forwarded-Proto \$scheme;
 
-        # Streaming / long-lived connections
-        proxy_buffering    off;
-        proxy_cache_bypass $http_upgrade;
-        proxy_read_timeout 3600s;
-        proxy_send_timeout 3600s;
+        proxy_buffering     off;
+        proxy_cache_bypass  \$http_upgrade;
+        proxy_read_timeout  3600s;
+        proxy_send_timeout  3600s;
     }
+}
+EOF
+```
+
+Enable the site:
+
+```bash
+ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/default
+rm -f /etc/nginx/sites-enabled/default.bak   # remove stale certbot backup
+```
+
+## 6. OpenClaw Landing Page (optional)
+
+When the server runs an OpenClaw gateway, the backend returns 404 for plain HTTP at root.
+This serves a landing page for browser visits while letting WebSocket upgrades pass through.
+
+Write `/var/www/html/landing.html`:
+
+```bash
+cat > /var/www/html/landing.html << EOF
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>$WEB_TITLE Coder Agent</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      min-height: 100vh; display: flex; align-items: center;
+      justify-content: center; background: #0d1117; color: #b0bec5;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .card { width: min(520px, 90vw); border: 1px solid rgba(255,255,255,0.08);
+      border-radius: 16px; padding: 40px; background: rgba(255,255,255,0.03); }
+    .badge { display: inline-flex; align-items: center; gap: 7px; font-size: 12px;
+      font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase;
+      color: #24e08a; margin-bottom: 24px; }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: #24e08a;
+      box-shadow: 0 0 8px #24e08a; animation: pulse 2s ease-in-out infinite; }
+    @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+    h1 { font-size: 28px; font-weight: 700; color: #e8ecf0;
+      letter-spacing: -0.3px; margin-bottom: 10px; }
+    .sub { font-size: 14px; line-height: 1.6; color: #78909c; margin-bottom: 32px; }
+    .info-block { background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 10px; padding: 18px 20px; font-size: 13px; line-height: 1.7; }
+    .info-block strong { color: #cfd8dc; }
+    .info-block code { background: rgba(255,255,255,0.07); border-radius: 4px;
+      padding: 1px 6px; font-size: 12px; color: #90caf9; }
+    .info-block a { color: #2563eb; text-decoration: none; }
+    .info-block a:hover { text-decoration: underline; }
+    .footer { margin-top: 28px; font-size: 11px; color: #37474f; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="badge"><span class="dot"></span> Online</div>
+    <h1>$WEB_TITLE Coder Agent</h1>
+    <p class="sub">AI coding assistant powered by Claude — ready to help with code, architecture, and engineering tasks.</p>
+    <div class="info-block">
+      <strong>Connect via OpenClaw</strong><br>
+      Open the <a href="https://openclaw.ai" target="_blank">OpenClaw</a> app and add a remote gateway:<br>
+      <code>wss://$HOSTNAME</code>
+      <br><br>
+      <strong>WhatsApp</strong><br>
+      Send a message to the configured WhatsApp group to interact with the agent directly.
+    </div>
+    <div class="footer">$HOSTNAME &mdash; $WEB_TITLE</div>
+  </div>
+</body>
+</html>
+EOF
+```
+
+Add the landing page intercept to the `location /` block inside the HTTPS server block:
+
+```nginx
+proxy_intercept_errors on;
+error_page 404 = @landing;
+```
+
+Add the named location after the `location /` block:
+
+```nginx
+location @landing {
+    root /var/www/html;
+    try_files /landing.html =503;
+    add_header Content-Type "text/html; charset=utf-8" always;
 }
 ```
 
-### 6. OpenClaw Landing Page (optional)
+## 7. Validate and Reload
 
-When `openclaw_host: true` is set in inventory, the playbook also:
+```bash
+nginx -t && systemctl reload nginx
+```
 
-- Writes a styled landing page to `/var/www/html/landing.html`
-- Adds an `error_page 404 = @landing` intercept to the proxy block so the OpenClaw gateway's 404 at root serves the landing page instead (WebSocket upgrades bypass this)
+## Certificate Renewal
 
-### 7. Cleanup
-
-Removes `/etc/nginx/sites-enabled/default.bak` — a stale backup certbot sometimes leaves that causes duplicate `server_name` conflicts.
-
-Validates config with `nginx -t` before reloading.
-
-## Manual Certificate Renewal
-
-Certbot auto-renewal is configured by the certbot package. To force a renewal manually:
+Certbot installs a systemd timer for automatic renewal. To force renewal manually:
 
 ```bash
 certbot renew --force-renewal
+systemctl reload nginx
+```
+
+## Re-issuing a Certificate
+
+```bash
+rm -rf /etc/letsencrypt/live/$HOSTNAME \
+       /etc/letsencrypt/archive/$HOSTNAME \
+       /etc/letsencrypt/renewal/$HOSTNAME.conf
+
+certbot --nginx --non-interactive --agree-tos \
+  --register-unsafely-without-email -d $HOSTNAME
+
+systemctl reload nginx
 ```
 
 ## Debugging
 
 ```bash
-# Check nginx config syntax
-nginx -t
+nginx -t                             # validate config
+tail -f /var/log/nginx/error.log     # error log
+certbot certificates                 # check cert expiry
+systemctl status nginx               # service status
 
-# View nginx error log
-tail -f /var/log/nginx/error.log
-
-# Check cert expiry
-certbot certificates
-
-# Test WebSocket connectivity
-curl -i -N -H "Connection: Upgrade" -H "Upgrade: websocket" \
-     -H "Host: myserver.example.com" \
-     https://myserver.example.com/
-```
-
-## Re-issuing a Certificate
-
-If a cert is corrupted or needs to be reissued, delete the letsencrypt state and re-run the playbook:
-
-```bash
-# On the server
-rm -rf /etc/letsencrypt/live/<hostname> \
-       /etc/letsencrypt/archive/<hostname> \
-       /etc/letsencrypt/renewal/<hostname>.conf
-
-# Then from the coder agent
-./run proxy <hostname>
+# Test WebSocket upgrade
+curl -i -N \
+  -H "Connection: Upgrade" \
+  -H "Upgrade: websocket" \
+  https://$HOSTNAME/
 ```
