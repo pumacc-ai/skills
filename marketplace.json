@@ -47,6 +47,14 @@
       "tags": ["ansible", "server", "provisioning", "devops", "ubuntu"]
     },
     {
+      "slug": "agent-setup",
+      "name": "Agent Setup",
+      "version": "1.0.0",
+      "path": "agent-setup",
+      "description": "Provision a remote OpenClaw agent node: SSH keys, git identity, home repo, openclaw install, systemd service, extensions, and cron sync. No Ansible.",
+      "tags": ["openclaw", "agent", "provisioning", "ssh", "systemd", "devops"]
+    },
+    {
       "slug": "nginx-proxy",
       "name": "Nginx Proxy",
       "version": "2.1.0",
