@@ -1,21 +1,43 @@
 ---
 name: Server Setup
 slug: server-setup
-version: "2.0.0"
-description: Provision a new Ubuntu server over SSH as root. Covers service user, packages, Node.js, Claude Code, swap, fail2ban, and profile vars from Bitwarden. No Ansible required.
+version: "2.1.0"
+description: Provision a new Ubuntu server over SSH as root. Reads host definitions from ./inventory.yaml. service_user is required per host — fails if missing. No Ansible required.
 ---
 
 # Server Setup Skill
 
 Provisions a fresh Ubuntu server over SSH as root using direct shell commands.
+Requires `./inventory.yaml` to be present with host definitions.
 
-## Inventory Detection
+## Inventory
 
-If `inventory.yaml` is present, parse target hosts with:
+Read host configuration from `./inventory.yaml`. **`service_user` is required for every host** — the skill must fail immediately if it is absent or empty for any host being provisioned.
+
+Expected inventory structure:
+
+```yaml
+all:
+  vars:
+    project: PumaCoder
+  children:
+    agents:
+      vars:
+        ansible_user: root
+      hosts:
+        coder.pumacc.com:
+          ansible_host: 129.212.150.103
+          service_user: pumacc          # REQUIRED — fails if missing
+          profile_vars:
+            ANTHROPIC_API_KEY: "bw:9455622e-e759-4cec-ba11-b40b00df693b"
+            CLAUDE_MODEL: "claude-sonnet-4-6"
+```
+
+Parse and validate all hosts:
 
 ```bash
 python3 - << 'EOF'
-import yaml, json, subprocess
+import yaml, json, subprocess, sys
 
 def bws_get_by_uuid(uuid):
     try:
@@ -32,11 +54,18 @@ with open('inventory.yaml') as f:
 
 all_vars = inv.get('all', {}).get('vars', {})
 results  = []
+errors   = []
 
 for group_name, group in inv.get('all', {}).get('children', {}).items():
     group_vars = group.get('vars', {})
     for hostname, host_vars in (group.get('hosts') or {}).items():
         hv = host_vars or {}
+
+        # service_user is required — fail hard if missing
+        service_user = hv.get('service_user') or hv.get('bands_user')
+        if not service_user:
+            errors.append(f"ERROR: host '{hostname}' is missing required field 'service_user'")
+            continue
 
         # Resolve profile_vars — bw:<uuid> values fetched from Bitwarden
         profile_vars = {}
@@ -49,10 +78,15 @@ for group_name, group in inv.get('all', {}).get('children', {}).items():
         results.append({
             'hostname':     hostname,
             'ansible_host': hv.get('ansible_host', hostname),
-            'service_user': hv.get('bands_user', hv.get('service_user', 'bands')),
+            'service_user': service_user,
             'project':      all_vars.get('project', 'Agent'),
             'profile_vars': profile_vars,
         })
+
+if errors:
+    for e in errors:
+        print(e, file=sys.stderr)
+    sys.exit(1)
 
 safe = json.loads(json.dumps(results))
 for h in safe:
@@ -62,21 +96,23 @@ print(json.dumps(safe, indent=2))
 EOF
 ```
 
-Set variables per host before running each section:
+After parsing, set shell variables for the host being provisioned:
 
 ```bash
-SERVER_HOST="129.212.150.103"   # ansible_host IP
-SERVICE_USER="pumacc"           # bands_user / service_user from inventory
-PROJECT="PumaCoder"             # all.vars.project
+SERVER_HOST="129.212.150.103"   # ansible_host from inventory
+SERVICE_USER="pumacc"           # service_user from inventory (required)
+PROJECT="PumaCoder"             # all.vars.project from inventory
 ```
 
-Run each section as root:
+Run each section as root over SSH:
 
 ```bash
 ssh root@$SERVER_HOST "bash -s" << 'ENDSSH'
   # commands here
 ENDSSH
 ```
+
+If `inventory.yaml` is not present, stop and ask the user to provide one before continuing.
 
 ---
 
