@@ -29,6 +29,14 @@
       "path": "github",
       "description": "Interact with GitHub using the gh CLI. Issues, PRs, CI runs, and advanced API queries.",
       "tags": ["github", "git", "ci", "devops"]
+    },
+    {
+      "slug": "bitwarden",
+      "name": "Bitwarden Secrets",
+      "version": "1.0.0",
+      "path": "bitwarden",
+      "description": "Manage secrets with Bitwarden Secrets Manager. Auto-sync secrets to env vars and SSH key files via sync-bws.",
+      "tags": ["secrets", "bitwarden", "bws", "ssh", "security"]
     }
   ]
 }
