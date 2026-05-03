@@ -55,6 +55,14 @@
       "tags": ["openclaw", "agent", "provisioning", "ssh", "systemd", "devops"]
     },
     {
+      "slug": "digital-ocean",
+      "name": "DigitalOcean",
+      "version": "1.0.0",
+      "path": "digital-ocean",
+      "description": "Manage DigitalOcean infrastructure with the doctl CLI: droplets, VPCs, firewalls, reserved IPs, load balancers, domains, and SSH keys. Includes installation and authentication.",
+      "tags": ["digitalocean", "doctl", "cloud", "droplets", "networking", "devops"]
+    },
+    {
       "slug": "proxy",
       "name": "Proxy",
       "version": "2.2.0",
